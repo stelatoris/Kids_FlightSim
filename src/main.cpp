@@ -8,6 +8,7 @@
 #include "RigidBody2D.h"
 #include "vector.h"
 #include <TM1637.h>
+#include <SevenSegmentTM1637.h>
 
 // Refuel 4-digit 7 segment Display
 const byte Refuel_PIN_CLK = 50; // Green wire define CLK pin (any digital pin)
@@ -22,7 +23,8 @@ TM1637 airspeed_display(AirSpeed_PIN_CLK, AirSpeed_PIN_DIO);
 // Airspeed 4-digit 7 segment Display
 const byte AutoPilot_PIN_CLK = 12; // Green wire define CLK pin (any digital pin)
 const byte AutoPilot_PIN_DIO = 13; // Yellow Wire define DIO pin (any digital pin)
-TM1637 AutoPilot_display(AutoPilot_PIN_CLK, AutoPilot_PIN_DIO);
+// TM1637 AutoPilot_display(AutoPilot_PIN_CLK, AutoPilot_PIN_DIO);
+SevenSegmentTM1637 AutoPilot_display(AutoPilot_PIN_CLK, AutoPilot_PIN_DIO);
 
 //------------------------------------------------------------------
 // Rotary Encoder Inputs - REFUEL
@@ -47,7 +49,9 @@ unsigned long r_prev_time = 0;
 int AP_counter = 0;
 double AP_desiredValue = 0;
 int AP_currentStateCLK;
-int AP_prevStateCLK;
+int AP_previouStateCLK;
+int AP_previousStateDT;
+int AP_currentStateDT;
 int AP_state_DT{0};
 int AP_state_SW{0};
 String AP_currentDir = "";
@@ -889,7 +893,7 @@ void AP_rotary_setup()
   pinMode(AUTO_PILOT_RT_SW, INPUT_PULLUP);
 
   // Read the initial state of CLK
-  AP_prevStateCLK = digitalRead(AUTO_PILOT_RT_CLK);
+  AP_previouStateCLK = digitalRead(AUTO_PILOT_RT_CLK);
 }
 
 void rotary_loop()
@@ -962,105 +966,143 @@ void rotary_loop()
     delay(1);
   }
 }
-
-void updateEncoder(const int encoderButtonPin, const int encoderPinA, const int encoderPinB,
-                   double &desiredValue, int &currentValue, int &currentState, int &previousState)
-{
-  // Read the current state of the encoder pins
-  int readingA = digitalRead(encoderPinA);
-  int readingB = digitalRead(encoderPinB);
-
-  // Determine the new state of the encoder
-  currentState = (readingA << 1) | readingB;
-
-  // Determine the direction of rotation
-  int direction = (previousState - currentState) % 4;
-  if (direction == 1 || direction == -3)
-  {
-    // Clockwise rotation
-    currentValue++;
-  }
-  else if (direction == 3 || direction == -1)
-  {
-    // Counter-clockwise rotation
-    currentValue--;
-  }
-
-  // Save the current state as the previous state
-  previousState = currentState;
-}
+int pinA = 14; // Connected to CLK on KY-040
+int pinB = 15; // Connected to DT on KY-040
+int encoderPosCount = 0;
+int pinALast;
+int aVal;
+boolean bCW;
 
 void AP_rotary_loop()
 {
-  int increment{5};
-  AP_currentStateCLK = digitalRead(AUTO_PILOT_RT_CLK);
+  // Ignore interrupts that occur too close together
+  static unsigned long lastInterruptTime = 0;
+  unsigned long interruptTime = millis();
+  if (interruptTime - lastInterruptTime < 5)
+  {
+    return;
+  }
+  lastInterruptTime = interruptTime;
+
+  // Define the increment for the encoder
+  int increment = 5;
   // If last and current state of CLK are different, then pulse occurred
   // React to only 1 state change to avoid double count
   if (!pwr_sw_state)
   {
-    // updateEncoder(AUTO_PILOT_RT_SW, AUTO_PILOT_RT_CLK, AUTO_PILOT_RT_DT,
-    // AP_desiredValue, AP_counter, AP_currentStateCLK, AP_prevStateCLK);
 
-    if (AP_currentStateCLK != AP_prevStateCLK && AP_currentStateCLK == 1)
-    {
-
-      // If the DT state is different than the CLK state then
-      // the encoder is rotating CCW so decrement
-      if (digitalRead(AUTO_PILOT_RT_DT) != AP_currentStateCLK)
-      {
-        AutoPilot_display.clearScreen();
+    aVal = digitalRead(pinA);
+    if (aVal != pinALast)
+    { // Means the knob is rotating
+      // if the knob is rotating, we need to determine direction
+      // We do that by reading pin B.
+      if (digitalRead(pinB) != aVal)
+      { // Means pin A Changed first - We're Rotating Clockwise
+        AP_counter += increment;
+        bCW = true;
+      }
+      else
+      { // Otherwise B changed first and we're moving CCW
+        bCW = false;
         AP_counter -= increment;
-        if (AP_counter < 0)
-        {
-          AutoPilot_display.clearScreen();
-          AP_counter = 0;
-        }
-        currentDir = "CCW";
+      }
+      Serial.print("Rotated: ");
+      if (bCW)
+      {
+        Serial.println("clockwise");
       }
       else
       {
-        AutoPilot_display.clearScreen();
-        // Encoder is rotating CW so increment
-        AP_counter += increment;
-        if (AP_counter > 9999)
-        {
-          AP_counter = 9999;
-        }
-        currentDir = "CW";
+        Serial.println("counterclockwise");
       }
-
-      AutoPilot_display.display(AP_counter);
+      Serial.print("Encoder Position: ");
+      Serial.println(AP_counter);
     }
+    pinALast = aVal;
 
-    // Remember last CLK state
-    AP_prevStateCLK = AP_currentStateCLK;
-
-    // Read the button state
-    int btnState = digitalRead(AUTO_PILOT_RT_SW);
-
-    // If we detect LOW signal, button is pressed
-    if (btnState == LOW)
+    // // Keep the counter within bounds
+    if (AP_counter < 0)
     {
-      // if 50ms have passed since last LOW pulse, it means that the
-      // button has been pressed, released and pressed again
-      if (millis() - AP_lastButtonPress > 50)
-      {
-        AP_desiredValue = (AP_counter);
-        AP_counter = 0;
-        AutoPilot_display.clearScreen();
-        AutoPilot_display.display("SET");
-      }
-
-      // Remember last button press event
-      AP_lastButtonPress = millis();
+      AP_counter = 0;
+    }
+    else if (AP_counter > 9999)
+    {
+      AP_counter = 9999;
     }
 
-    // Put in a slight delay to help debounce the reading
-    delay(5);
+    // // Display the current counter value on the LED display
+    // AutoPilot_display.clearScreen();
+    AutoPilot_display.clear();
+    AutoPilot_display.print(AP_counter);
+
+    //----------------------------------------------
+    // int increment = 5;
+
+    // AP_currentStateCLK = digitalRead(AUTO_PILOT_RT_CLK);
+    // if (AP_currentStateCLK != AP_previouStateCLK)
+    // { // Means the knob is rotating
+    //   // if the knob is rotating, we need to determine direction
+    //   // We do that by reading pin B.
+    //   if (digitalRead(AUTO_PILOT_RT_DT) != AP_currentStateCLK)
+    //   { // Means pin A Changed first - We're Rotating Clockwise
+    //     AP_counter += increment;
+    //     bCW = true;
+    //   }
+    //   else
+    //   { // Otherwise B changed first and we're moving CCW
+    //     bCW = false;
+    //     AP_counter -= increment;
+    //   }
+    //   Serial.print("Rotated: ");
+    //   if (bCW)
+    //   {
+    //     Serial.println("clockwise");
+    //   }
+    //   else
+    //   {
+    //     Serial.println("counterclockwise");
+    //   }
+    // }
+    // AP_previouStateCLK = AP_currentStateCLK;
+
+    // // Keep the counter within bounds
+    // if (AP_counter < 0)
+    // {
+    //   AP_counter = 0;
+    // }
+    // else if (AP_counter > 9999)
+    // {
+    //   AP_counter = 9999;
+    // }
+
+    // Serial.print("AP_counter: ");
+    // Serial.println(AP_counter);
+
+    // // Display the current counter value on the LED display
+    // AutoPilot_display.clearScreen();
+    // AutoPilot_display.display(AP_counter);
+    // AutoPilot_display.refresh();
+
+    // // Read the state of the button
+    // int btnState = digitalRead(AUTO_PILOT_RT_SW);
+
+    // // If the button is pressed, set the desired value and clear the counter
+    // if (btnState == LOW && (millis() - AP_lastButtonPress > 50))
+    // {
+    //   AP_desiredValue = AP_counter;
+    //   AP_counter = 0;
+    //   AutoPilot_display.clearScreen();
+    //   AutoPilot_display.display("SET");
+    //   AutoPilot_display.refresh();
+    //   AP_lastButtonPress = millis();
+    // }
   }
-  Serial.print(AP_desiredValue);
-  Serial.print('\t');
-  Serial.println(AP_counter);
+
+  // Debugging output
+  // Serial.print(AP_desiredValue);
+  // Serial.print('\t');
+  // Serial.println(AP_counter);
+  delay(1);
 }
 
 void refuel_DSP_setup()
@@ -1073,12 +1115,14 @@ void airspeed_DSP_setup()
 {
   airspeed_display.begin();              // initializes the display
   airspeed_display.changeBrightness(10); // set the brightness to 100 %
+  airspeed_display.display(0);
 }
 
 void AutoPilot_DSP_setup()
 {
-  AutoPilot_display.begin();              // initializes the display
-  AutoPilot_display.changeBrightness(10); // set the brightness to 100 %
+  AutoPilot_display.begin();           // initializes the display
+  AutoPilot_display.setBacklight(100); // set the brightness to 100 %
+  AutoPilot_display.clear();
   // AutoPilot_display.display(1234);
   Serial.println("Autopilot Display Ready!");
 }
@@ -1144,6 +1188,12 @@ void setup()
   // engine1.setON();
   // engine2.setON();
   // airplane.vVelocity=350;
+  pinMode(pinA, INPUT);
+  pinMode(pinB, INPUT);
+  /* Read Pin A
+  Whatever state it's in will reflect the last position
+  */
+  pinALast = digitalRead(pinA);
 }
 
 void loop()
