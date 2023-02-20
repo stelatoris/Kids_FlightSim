@@ -26,7 +26,8 @@ struct RigidBody {
   void add_drag_force(String n, float d, bool s);
   
   double vVelocity;
-  
+  bool autoPilot_ON;
+  double AP_speedSet;
   float S;    // displacement
   
 

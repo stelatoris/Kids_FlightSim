@@ -7,20 +7,19 @@
 #include "LED_Blink.h"
 #include "RigidBody2D.h"
 #include "vector.h"
-#include <TM1637.h>
 #include <SevenSegmentTM1637.h>
 
 // Refuel 4-digit 7 segment Display
 const byte Refuel_PIN_CLK = 50; // Green wire define CLK pin (any digital pin)
 const byte Refuel_PIN_DIO = 52; // Yellow Wire define DIO pin (any digital pin)
-TM1637 refuel_display(Refuel_PIN_CLK, Refuel_PIN_DIO);
+SevenSegmentTM1637 refuel_display(Refuel_PIN_CLK, Refuel_PIN_DIO);
 
 // Airspeed 4-digit 7 segment Display
 const byte AirSpeed_PIN_CLK = 45; // Green wire define CLK pin (any digital pin)
 const byte AirSpeed_PIN_DIO = 47; // Yellow Wire define DIO pin (any digital pin)
-TM1637 airspeed_display(AirSpeed_PIN_CLK, AirSpeed_PIN_DIO);
+SevenSegmentTM1637 airspeed_display(AirSpeed_PIN_CLK, AirSpeed_PIN_DIO);
 
-// Airspeed 4-digit 7 segment Display
+// Auto Pilot 4-digit 7 segment Display
 const byte AutoPilot_PIN_CLK = 12; // Green wire define CLK pin (any digital pin)
 const byte AutoPilot_PIN_DIO = 13; // Yellow Wire define DIO pin (any digital pin)
 // TM1637 AutoPilot_display(AutoPilot_PIN_CLK, AutoPilot_PIN_DIO);
@@ -47,7 +46,7 @@ unsigned long r_prev_time = 0;
 #define AUTO_PILOT_RT_SW 16
 
 int AP_counter = 0;
-double AP_desiredValue = 0;
+
 int AP_currentStateCLK;
 int AP_previouStateCLK;
 int AP_previousStateDT;
@@ -70,11 +69,11 @@ const int gear_greenPin = 4;
 const int gear_bluePin = 5;
 // 12 AP Display
 // 13 AP display
-// 14
-// 16
-// 17
-// 18
-// 19
+// 14 AP rotary
+// 16 AP rotary
+// 17 AP rotary
+// 18 AP Button
+// 19 AP ON LED
 // 20
 // 21
 // 28
@@ -101,7 +100,7 @@ int gears_sw_state{0};
 int eng1_cut_sw_state{0};
 int eng2_cut_sw_state{0};
 
-const int Int_LT{7};
+const int Interior_Lights{7};
 const int pwr_LED{22};
 const int eng_LED{23};
 const int fuel_E_LED{24};
@@ -142,7 +141,10 @@ double speed_v{0};
 double kp = 3.8;
 double ki = 0.0000018;
 double kd = 5.0;
-const double desired_speed = 100;
+double AP_desired_speed = 0;
+bool AP_ON = false;
+uint8_t AP_Button_Pin = 18;
+uint8_t AP_LED = 19;
 
 /*
  *
@@ -174,7 +176,7 @@ const double desired_speed = 100;
 */
 
 //--------------------------Auto Pilot --------------------------------------
-double speed_Auto_Pilot(double current_speed, double desired_speed)
+double speed_Auto_Pilot(const double current_speed, const double desired_speed)
 {
   // Define LQR gains and constants
   double K = 1;       // Proportional gain
@@ -374,6 +376,35 @@ void setColor(int redValue, int greenValue, int blueValue)
 }
 
 //----------------------------------------------------------------------------
+
+bool autoPilot(RigidBody &airplane, const uint8_t button_pin, uint8_t LED_pin)
+{
+  if (pwr_sw_state)
+  {
+    bool buttonIsPressed = false;
+    if (digitalRead(button_pin) == HIGH)
+      buttonIsPressed = true;
+
+    if (airplane.autoPilot_ON)
+    {
+      airplane.autoPilot_ON = false;
+      digitalWrite(LED_pin, LOW);
+    }
+    else
+    {
+      airplane.autoPilot_ON = true;
+      digitalWrite(LED_pin, HIGH);
+    }
+  }
+  else
+  {
+    digitalWrite(LED_pin, LOW);
+    airplane.autoPilot_ON = false;
+  }
+
+  return airplane.autoPilot_ON;
+}
+
 //****************** FUEL/ENGINE **********************************************
 
 void Fuel_tank::set_refuel(int q)
@@ -397,6 +428,8 @@ void Fuel_tank::refuel()
 
 double Engine::get_throttle()
 {
+  if (AP_ON && AP_desired_speed >= 150)
+    return speed_Auto_Pilot(airplane.vVelocity, AP_desired_speed);
 
   if (get_throttle_axis() == false)
   {
@@ -409,8 +442,6 @@ double Engine::get_throttle()
     double angle = floatMap(throttle, 0, 1023, 0, 100);
     return 100 - angle;
   }
-
-  // return speed_Auto_Pilot(airplane.vVelocity, desired_speed); //----------------------------------------------------------------
 }
 
 double Engine::rpm()
@@ -478,14 +509,14 @@ bool Engine::fuel_pump()
   if (f_pump_sw_state && pwr_sw_state)
   {
     digitalWrite(f_pump_LED, HIGH);
-    refuel_display.onMode();
+    refuel_display.on();
     return true;
   }
   else
   {
     digitalWrite(f_pump_LED, LOW);
     eng_ON = false;
-    refuel_display.offMode();
+    refuel_display.off();
     ref_amount = 0;
     return false;
   }
@@ -541,15 +572,15 @@ void gauge_pwr()
     digitalWrite(eng_LED, LOW);
     digitalWrite(fuel_E_LED, LOW);
     digitalWrite(f_pump_LED, LOW);
-    refuel_display.offMode();
-    airspeed_display.offMode();
-    digitalWrite(Int_LT, LOW);
+    refuel_display.off();
+    airspeed_display.off();
+    digitalWrite(Interior_Lights, LOW);
   }
   else
   {
     digitalWrite(pwr_LED, HIGH);
-    airspeed_display.onMode();
-    digitalWrite(Int_LT, HIGH);
+    airspeed_display.on();
+    digitalWrite(Interior_Lights, HIGH);
   }
 }
 //---------------------------------
@@ -850,8 +881,8 @@ void gauge_Speed()
       //Serial.print(int(deg));
       servo_Speed.write(deg);
       */
-    airspeed_display.clearScreen();
-    airspeed_display.display(int(airplane.vVelocity));
+    airspeed_display.clear();
+    airspeed_display.print(int(airplane.vVelocity));
   }
   else
   {
@@ -914,18 +945,18 @@ void rotary_loop()
       // the encoder is rotating CCW so decrement
       if (digitalRead(DT) != currentStateCLK)
       {
-        refuel_display.clearScreen();
+        refuel_display.clear();
         ref_amount -= fill;
         if (ref_amount < 0)
         {
-          refuel_display.clearScreen();
+          refuel_display.clear();
           ref_amount = 0;
         }
         currentDir = "CCW";
       }
       else
       {
-        refuel_display.clearScreen();
+        refuel_display.clear();
         // Encoder is rotating CW so increment
         ref_amount += fill;
         if (ref_amount > 9999)
@@ -935,7 +966,7 @@ void rotary_loop()
         AP_currentDir = "CW";
       }
 
-      refuel_display.display(ref_amount);
+      refuel_display.print(ref_amount);
     }
 
     // Remember last CLK state
@@ -954,8 +985,8 @@ void rotary_loop()
         // tank.refuel(ref_amount);
         tank.set_refuel(ref_amount);
         ref_amount = 0;
-        refuel_display.clearScreen();
-        refuel_display.display("FILL");
+        refuel_display.clear();
+        refuel_display.print("FILL");
       }
 
       // Remember last button press event
@@ -973,29 +1004,31 @@ int pinALast;
 int aVal;
 boolean bCW;
 
-void AP_rotary_loop()
+double AP_rotary_loop()
 {
   // Ignore interrupts that occur too close together
   static unsigned long lastInterruptTime = 0;
   unsigned long interruptTime = millis();
   if (interruptTime - lastInterruptTime < 5)
   {
-    return;
+    return 0;
   }
   lastInterruptTime = interruptTime;
 
-  // Define the increment for the encoder
+  // Define the initial increment for the encoder
   int increment = 5;
+
   // If last and current state of CLK are different, then pulse occurred
   // React to only 1 state change to avoid double count
   if (!pwr_sw_state)
   {
-
     aVal = digitalRead(pinA);
+
     if (aVal != pinALast)
     { // Means the knob is rotating
       // if the knob is rotating, we need to determine direction
       // We do that by reading pin B.
+      delay(1);
       if (digitalRead(pinB) != aVal)
       { // Means pin A Changed first - We're Rotating Clockwise
         AP_counter += increment;
@@ -1006,116 +1039,66 @@ void AP_rotary_loop()
         bCW = false;
         AP_counter -= increment;
       }
-      Serial.print("Rotated: ");
-      if (bCW)
+
+      // Determine the duration between the two state changes
+      unsigned long duration = interruptTime - lastInterruptTime;
+
+      // Serial.print("Rotated: ");
+      // if (bCW)
+      // {
+      //   Serial.println("clockwise");
+      // }
+      // else
+      // {
+      //   Serial.println("counterclockwise");
+      // }
+      // Serial.print("Encoder Position: ");
+      // Serial.println(AP_counter);
+      // Keep the counter within bounds
+      if (AP_counter < 0)
       {
-        Serial.println("clockwise");
+        AP_counter = 0;
       }
-      else
+      else if (AP_counter > 9999)
       {
-        Serial.println("counterclockwise");
+        AP_counter = 9999;
       }
-      Serial.print("Encoder Position: ");
-      Serial.println(AP_counter);
+
+      // Display the current counter value on the LED display
+      AutoPilot_display.clear();
+      AutoPilot_display.print(AP_counter);
     }
+
     pinALast = aVal;
 
-    // // Keep the counter within bounds
-    if (AP_counter < 0)
+    // Read the state of the button
+    int btnState = digitalRead(AUTO_PILOT_RT_SW);
+
+    // If the button is pressed, set the desired value and clear the counter
+    if (btnState == LOW && (millis() - AP_lastButtonPress > 50))
     {
+      double speed_setting = AP_counter;
       AP_counter = 0;
+      AutoPilot_display.clear();
+      AutoPilot_display.print("SET");
+      AP_lastButtonPress = millis();
+      return speed_setting;
     }
-    else if (AP_counter > 9999)
-    {
-      AP_counter = 9999;
-    }
-
-    // // Display the current counter value on the LED display
-    // AutoPilot_display.clearScreen();
-    AutoPilot_display.clear();
-    AutoPilot_display.print(AP_counter);
-
-    //----------------------------------------------
-    // int increment = 5;
-
-    // AP_currentStateCLK = digitalRead(AUTO_PILOT_RT_CLK);
-    // if (AP_currentStateCLK != AP_previouStateCLK)
-    // { // Means the knob is rotating
-    //   // if the knob is rotating, we need to determine direction
-    //   // We do that by reading pin B.
-    //   if (digitalRead(AUTO_PILOT_RT_DT) != AP_currentStateCLK)
-    //   { // Means pin A Changed first - We're Rotating Clockwise
-    //     AP_counter += increment;
-    //     bCW = true;
-    //   }
-    //   else
-    //   { // Otherwise B changed first and we're moving CCW
-    //     bCW = false;
-    //     AP_counter -= increment;
-    //   }
-    //   Serial.print("Rotated: ");
-    //   if (bCW)
-    //   {
-    //     Serial.println("clockwise");
-    //   }
-    //   else
-    //   {
-    //     Serial.println("counterclockwise");
-    //   }
-    // }
-    // AP_previouStateCLK = AP_currentStateCLK;
-
-    // // Keep the counter within bounds
-    // if (AP_counter < 0)
-    // {
-    //   AP_counter = 0;
-    // }
-    // else if (AP_counter > 9999)
-    // {
-    //   AP_counter = 9999;
-    // }
-
-    // Serial.print("AP_counter: ");
-    // Serial.println(AP_counter);
-
-    // // Display the current counter value on the LED display
-    // AutoPilot_display.clearScreen();
-    // AutoPilot_display.display(AP_counter);
-    // AutoPilot_display.refresh();
-
-    // // Read the state of the button
-    // int btnState = digitalRead(AUTO_PILOT_RT_SW);
-
-    // // If the button is pressed, set the desired value and clear the counter
-    // if (btnState == LOW && (millis() - AP_lastButtonPress > 50))
-    // {
-    //   AP_desiredValue = AP_counter;
-    //   AP_counter = 0;
-    //   AutoPilot_display.clearScreen();
-    //   AutoPilot_display.display("SET");
-    //   AutoPilot_display.refresh();
-    //   AP_lastButtonPress = millis();
-    // }
   }
-
-  // Debugging output
-  // Serial.print(AP_desiredValue);
-  // Serial.print('\t');
-  // Serial.println(AP_counter);
-  delay(1);
+  return 0;
 }
 
 void refuel_DSP_setup()
 {
-  refuel_display.begin();              // initializes the display
-  refuel_display.changeBrightness(10); // set the brightness to 100 %
+  refuel_display.begin();           // initializes the display
+  refuel_display.setBacklight(100); // set the brightness to 100 %
 }
 
 void airspeed_DSP_setup()
 {
-  airspeed_display.begin();              // initializes the display
-  airspeed_display.changeBrightness(10); // set the brightness to 100 %
-  airspeed_display.display(0);
+  airspeed_display.begin();          // initializes the display
+  airspeed_display.setBacklight(10); // set the brightness to 100 %
+  airspeed_display.print(0);
 }
 
 void AutoPilot_DSP_setup()
@@ -1123,11 +1106,20 @@ void AutoPilot_DSP_setup()
   AutoPilot_display.begin();           // initializes the display
   AutoPilot_display.setBacklight(100); // set the brightness to 100 %
   AutoPilot_display.clear();
+  AutoPilot_display.print("0000");
   // AutoPilot_display.display(1234);
   Serial.println("Autopilot Display Ready!");
 }
 
 //------------------------------------------------------------------
+
+void aircraft_Systems()
+{
+  if (pwr_sw_state)
+  {
+    autoPilot(airplane, AP_Button_Pin, AP_LED);
+  }
+}
 
 void setup()
 {
@@ -1141,6 +1133,7 @@ void setup()
   pinMode(eng2_cutoff, INPUT);
   pinMode(throttle1_knob, INPUT);
   pinMode(throttle2_knob, INPUT);
+  pinMode(AP_Button_Pin, INPUT);
 
   // 4-Digit 7 Segment Display
   // pinMode(PIN_CLK, OUTPUT);
@@ -1152,7 +1145,8 @@ void setup()
   pinMode(fuel_L_LED, OUTPUT);
   pinMode(gears_LED, OUTPUT);
   pinMode(f_pump_LED, OUTPUT);
-  pinMode(Int_LT, OUTPUT);
+  pinMode(Interior_Lights, OUTPUT);
+  pinMode(AP_LED, OUTPUT);
 
   pinMode(speed_servo, OUTPUT);
   pinMode(rpm1_servo, OUTPUT);
@@ -1200,6 +1194,7 @@ void loop()
 {
   check_inputs();
   timer_second();
+  aircraft_Systems();
 
   engine1.set_throttle(analogRead(throttle1_knob));
   engine2.set_throttle(analogRead(throttle2_knob));
@@ -1228,7 +1223,8 @@ void loop()
 
   gauge_Speed();
   rotary_loop();
-  AP_rotary_loop();
+  AP_desired_speed = AP_rotary_loop();
+  AP_ON = airplane.autoPilot_ON;
   print_stats();
 }
 
