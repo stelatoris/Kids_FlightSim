@@ -70,10 +70,10 @@ const int gear_bluePin = 5;
 // 12 AP Display
 // 13 AP display
 // 14 AP rotary
+// 15 AP rotary
 // 16 AP rotary
-// 17 AP rotary
-// 18 AP Button
-// 19 AP ON LED
+// 17 AP Button
+// 18 AP ON LED
 // 20
 // 21
 // 28
@@ -83,22 +83,16 @@ const int gear_bluePin = 5;
 // 44
 // 46
 // 48
+const uint8_t throttle1_knob{A0};
+const uint8_t throttle2_knob{A1};
 
 const int power_swtch{2};
-const int gears_swtch{15};
+const int gears_swtch{21};
 const int f_pump_swtch{6};
 const int eng1_start{8};
 const int eng2_start{9};
 const int eng1_cutoff{10};
 const int eng2_cutoff{11};
-const uint8_t throttle1_knob{A0};
-const uint8_t throttle2_knob{A1};
-
-int pwr_sw_state{0};
-int f_pump_sw_state{0};
-int gears_sw_state{0};
-int eng1_cut_sw_state{0};
-int eng2_cut_sw_state{0};
 
 const int Interior_Lights{7};
 const int pwr_LED{22};
@@ -122,6 +116,12 @@ const int rpm1_servo{31};
 const int rpm2_servo{32};
 const int speed_servo{35};
 
+int pwr_sw_state{0};
+int f_pump_sw_state{0};
+int gears_sw_state{0};
+int eng1_cut_sw_state{0};
+int eng2_cut_sw_state{0};
+
 Fuel_tank tank{10000, 10000};
 int ref_amount{0};
 int fill_amount{0};
@@ -143,10 +143,15 @@ double ki = 0.0000018;
 double kd = 5.0;
 double AP_desired_speed = 0;
 bool AP_ON = false;
-uint8_t AP_Button_Pin = 18;
-uint8_t AP_LED = 19;
-// for comiting
+uint8_t AP_Button_Pin = 17;
+uint8_t AP_LED = 18;
 
+const int buttonPin = 2;            // set the button pin
+const int ledPin = 13;              // set the LED pin
+int buttonState = 0;                // variable for reading the button state
+int lastButtonState = 0;            // variable for the previous button state
+unsigned long lastDebounceTime = 0; // the last time the output pin was toggled
+unsigned long debounceDelay = 50;   // the debounce time; increase if the output flickers
 
 /*
  *
@@ -381,24 +386,20 @@ void setColor(int redValue, int greenValue, int blueValue)
 
 bool autoPilot(RigidBody &airplane, const uint8_t button_pin, uint8_t LED_pin)
 {
-  if (pwr_sw_state)
-  {
-    bool buttonIsPressed = false;
-    if (digitalRead(button_pin) == HIGH)
-      buttonIsPressed = true;
+  static bool prev_button_state = false; // Keep track of previous button state
+  bool buttonIsPressed = digitalRead(button_pin) == HIGH;
 
-    if (airplane.autoPilot_ON)
-    {
-      airplane.autoPilot_ON = false;
-      digitalWrite(LED_pin, LOW);
-    }
-    else
-    {
-      airplane.autoPilot_ON = true;
-      digitalWrite(LED_pin, HIGH);
-    }
+  // Only toggle auto-pilot when button transitions from not pressed to pressed
+  if (buttonIsPressed && !prev_button_state)
+  {
+    airplane.autoPilot_ON = !airplane.autoPilot_ON;
+    digitalWrite(LED_pin, airplane.autoPilot_ON ? HIGH : LOW);
+    Serial.println(airplane.autoPilot_ON ? "AP ON" : "AP OFF");
   }
-  else
+
+  prev_button_state = buttonIsPressed;
+
+  if (!pwr_sw_state)
   {
     digitalWrite(LED_pin, LOW);
     airplane.autoPilot_ON = false;
@@ -999,8 +1000,7 @@ void rotary_loop()
     delay(1);
   }
 }
-int pinA = 14; // Connected to CLK on KY-040
-int pinB = 15; // Connected to DT on KY-040
+
 int encoderPosCount = 0;
 int pinALast;
 int aVal;
@@ -1024,14 +1024,14 @@ double AP_rotary_loop()
   // React to only 1 state change to avoid double count
   if (!pwr_sw_state)
   {
-    aVal = digitalRead(pinA);
+    aVal = digitalRead(AUTO_PILOT_RT_CLK);
 
     if (aVal != pinALast)
     { // Means the knob is rotating
       // if the knob is rotating, we need to determine direction
       // We do that by reading pin B.
       delay(1);
-      if (digitalRead(pinB) != aVal)
+      if (digitalRead(AUTO_PILOT_RT_DT) != aVal)
       { // Means pin A Changed first - We're Rotating Clockwise
         AP_counter += increment;
         bCW = true;
@@ -1045,17 +1045,17 @@ double AP_rotary_loop()
       // Determine the duration between the two state changes
       unsigned long duration = interruptTime - lastInterruptTime;
 
-      // Serial.print("Rotated: ");
-      // if (bCW)
-      // {
-      //   Serial.println("clockwise");
-      // }
-      // else
-      // {
-      //   Serial.println("counterclockwise");
-      // }
-      // Serial.print("Encoder Position: ");
-      // Serial.println(AP_counter);
+      Serial.print("Rotated: ");
+      if (bCW)
+      {
+        Serial.println("clockwise");
+      }
+      else
+      {
+        Serial.println("counterclockwise");
+      }
+      Serial.print("Encoder Position: ");
+      Serial.println(AP_counter);
       // Keep the counter within bounds
       if (AP_counter < 0)
       {
@@ -1125,7 +1125,7 @@ void aircraft_Systems()
 
 void setup()
 {
-  Serial.begin(9600);
+  Serial.begin(115200);
   pinMode(power_swtch, INPUT);
   pinMode(eng1_start, INPUT);
   pinMode(eng2_start, INPUT);
@@ -1184,12 +1184,12 @@ void setup()
   // engine1.setON();
   // engine2.setON();
   // airplane.vVelocity=350;
-  pinMode(pinA, INPUT);
-  pinMode(pinB, INPUT);
+  pinMode(AUTO_PILOT_RT_CLK, INPUT);
+  pinMode(AUTO_PILOT_RT_DT, INPUT);
   /* Read Pin A
   Whatever state it's in will reflect the last position
   */
-  pinALast = digitalRead(pinA);
+  pinALast = digitalRead(AUTO_PILOT_RT_CLK);
 }
 
 void loop()
