@@ -141,8 +141,8 @@ double speed_v{0};
 double kp = 3.8;
 double ki = 0.0000018;
 double kd = 5.0;
-double AP_desired_speed = 0;
-bool AP_ON = false;
+// double AP_desired_speed = 0;
+// bool AP_ON = false;
 uint8_t AP_Button_Pin = 17;
 uint8_t AP_LED = 18;
 
@@ -183,60 +183,58 @@ const double desired_speed = 100;
 */
 
 //--------------------------Auto Pilot --------------------------------------
-double speed_Auto_Pilot(const double current_speed, const double desired_speed)
+// double speed_Auto_Pilot(const double current_speed, const double desired_speed)
+// {
+//   // Define LQR gains and constants
+//   double K = 1;       // Proportional gain
+//   double Ki = 1.0;    // Integral gain
+//   double Kd = 0.1;    // Derivative gain
+//   double Ts = 0.1;    // Sample time
+//   double limit = 100; // Throttle limit
+
+//   // Define error and integral error
+//   static double error_integral = 0;
+//   double error = desired_speed - current_speed;
+
+//   // Calculate derivative error
+//   static double last_error = 0;
+//   double error_derivative = (error - last_error) / Ts;
+//   last_error = error;
+
+//   // Calculate error integral with anti-windup protection
+//   error_integral += error * Ts;
+//   if (error_integral > limit / Ki)
+//   {
+//     error_integral = limit / Ki;
+//   }
+//   else if (error_integral < -limit / Ki)
+//   {
+//     error_integral = -limit / Ki;
+//   }
+
+//   // Calculate control output
+//   double u = K * error + Ki * error_integral + Kd * error_derivative;
+
+//   // Apply throttle limit to control output
+//   if (u > limit)
+//   {
+//     u = limit;
+//   }
+//   else if (u < -limit)
+//   {
+//     u = -limit;
+//   }
+
+//   // Map control output to throttle input range of 0 to 100
+//   double throttle = ((u + limit) / (2 * limit)) * 100;
+
+//   // Return throttle value
+//   return throttle;
+// }
+
+double speed_Auto_Pilot(double current_speed, double target_speed)
 {
-  // Define LQR gains and constants
-  double K = 1;       // Proportional gain
-  double Ki = 1.0;    // Integral gain
-  double Kd = 0.1;    // Derivative gain
-  double Ts = 0.1;    // Sample time
-  double limit = 100; // Throttle limit
-
-  // Define error and integral error
-  static double error_integral = 0;
-  double error = desired_speed - current_speed;
-
-  // Calculate derivative error
-  static double last_error = 0;
-  double error_derivative = (error - last_error) / Ts;
-  last_error = error;
-
-  // Calculate error integral with anti-windup protection
-  error_integral += error * Ts;
-  if (error_integral > limit / Ki)
-  {
-    error_integral = limit / Ki;
-  }
-  else if (error_integral < -limit / Ki)
-  {
-    error_integral = -limit / Ki;
-  }
-
-  // Calculate control output
-  double u = K * error + Ki * error_integral + Kd * error_derivative;
-
-  // Apply throttle limit to control output
-  if (u > limit)
-  {
-    u = limit;
-  }
-  else if (u < -limit)
-  {
-    u = -limit;
-  }
-
-  // Map control output to throttle input range of 0 to 100
-  double throttle = ((u + limit) / (2 * limit)) * 100;
-
-  // Return throttle value
-  return throttle;
-}
-
-/*
-
-double speed_Auto_Pilot(double current_speed, double target_speed) {
   // Initialize PID controller gains
-
 
   // Initialize variables
   double error = 0;
@@ -249,20 +247,25 @@ double speed_Auto_Pilot(double current_speed, double target_speed) {
   error_sum += error;
   double d_error = error - last_error;
 
-
   // Calculate output from PID algorithm
   double output = kp * error + ki * error_sum + kd * d_error;
-  /*
-  Serial.print("e: "); Serial.print(error);
-  Serial.print("De: "); Serial.print(d_error);
-  Serial.print("\t O: "); Serial.print(output);
-Serial.print("\t CS: "); Serial.println(current_speed);
-*/
-/*
+
+  // Serial.print("e: ");
+  // Serial.print(error);
+  // Serial.print("De: ");
+  // Serial.print(d_error);
+  // Serial.print("\t O: ");
+  // Serial.print(output);
+  // Serial.print("\t CS: ");
+  // Serial.println(current_speed);
+
   // Saturate output to [0, 100]
-  if (output > 100) {
+  if (output > 100)
+  {
     output = 100;
-  } else if (output < 0) {
+  }
+  else if (output < 0)
+  {
     output = 0;
   }
 
@@ -271,8 +274,6 @@ Serial.print("\t CS: "); Serial.println(current_speed);
 
   return output;
 }
-
-*/
 
 //-----------------------------------------------------------------
 
@@ -396,7 +397,8 @@ bool autoPilot(RigidBody &airplane, const uint8_t button_pin, uint8_t LED_pin)
     {
       airplane.autoPilot_ON = !airplane.autoPilot_ON;
       digitalWrite(LED_pin, airplane.autoPilot_ON ? HIGH : LOW);
-      Serial.println(airplane.autoPilot_ON ? "AP ON" : "AP OFF");
+      // Serial.println(airplane.autoPilot_ON ? "AP ON" : "AP OFF");
+      // Serial.println(airplane.autoPilot_ON);
     }
 
     prev_button_state = buttonIsPressed;
@@ -434,8 +436,10 @@ void Fuel_tank::refuel()
 
 double Engine::get_throttle()
 {
-  if (AP_ON && AP_desired_speed >= 150)
-    return speed_Auto_Pilot(airplane.vVelocity, AP_desired_speed);
+  if (airplane.autoPilot_ON && airplane.AP_speedSet >= 150)
+  {
+    return speed_Auto_Pilot(airplane.vVelocity, airplane.AP_speedSet);
+  }
 
   if (get_throttle_axis() == false)
   {
@@ -1009,14 +1013,14 @@ int pinALast;
 int aVal;
 boolean bCW;
 
-double AP_rotary_loop()
+AP_rotary_loop()
 {
   // Ignore interrupts that occur too close together
   static unsigned long lastInterruptTime = 0;
   unsigned long interruptTime = millis();
   if (interruptTime - lastInterruptTime < 5)
   {
-    return 0;
+    return;
   }
   lastInterruptTime = interruptTime;
 
@@ -1092,9 +1096,9 @@ double AP_rotary_loop()
         AutoPilot_display.clear();
         AutoPilot_display.print("SET");
         prev_AP_Set_ButtonPressTime = millis();
-        Serial.println("Auto Pilot SET!");
-        Serial.println(speed_setting);
-        return speed_setting;
+        // Serial.println("Auto Pilot SET!");
+        // Serial.println(speed_setting);
+        airplane.AP_speedSet = speed_setting;
       }
 
       prev_AP_Set_ButtonState = LOW;
@@ -1103,10 +1107,7 @@ double AP_rotary_loop()
     {
       prev_AP_Set_ButtonState = HIGH;
     }
-
-    return 0;
   }
-  return 0;
 }
 
 void refuel_DSP_setup()
@@ -1243,8 +1244,7 @@ void loop()
 
   gauge_Speed();
   rotary_loop();
-  AP_desired_speed = AP_rotary_loop();
-  AP_ON = airplane.autoPilot_ON;
+  AP_rotary_loop();
   print_stats();
 }
 
