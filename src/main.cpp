@@ -146,12 +146,12 @@ bool AP_ON = false;
 uint8_t AP_Button_Pin = 17;
 uint8_t AP_LED = 18;
 
-const int buttonPin = 2;            // set the button pin
-const int ledPin = 13;              // set the LED pin
-int buttonState = 0;                // variable for reading the button state
-int lastButtonState = 0;            // variable for the previous button state
-unsigned long lastDebounceTime = 0; // the last time the output pin was toggled
-unsigned long debounceDelay = 50;   // the debounce time; increase if the output flickers
+const int buttonPin = 2; // set the button pin
+const int ledPin = 13;   // set the LED pin
+// int buttonState = 0;                // variable for reading the button state
+// int lastButtonState = 0;            // variable for the previous button state
+// unsigned long lastDebounceTime = 0; // the last time the output pin was toggled
+// unsigned long debounceDelay = 50;   // the debounce time; increase if the output flickers
 
 /*
  *
@@ -386,20 +386,23 @@ void setColor(int redValue, int greenValue, int blueValue)
 
 bool autoPilot(RigidBody &airplane, const uint8_t button_pin, uint8_t LED_pin)
 {
-  static bool prev_button_state = false; // Keep track of previous button state
-  bool buttonIsPressed = digitalRead(button_pin) == HIGH;
-
-  // Only toggle auto-pilot when button transitions from not pressed to pressed
-  if (buttonIsPressed && !prev_button_state)
+  if (pwr_sw_state)
   {
-    airplane.autoPilot_ON = !airplane.autoPilot_ON;
-    digitalWrite(LED_pin, airplane.autoPilot_ON ? HIGH : LOW);
-    Serial.println(airplane.autoPilot_ON ? "AP ON" : "AP OFF");
+    static bool prev_button_state = false; // Keep track of previous button state
+    bool buttonIsPressed = digitalRead(button_pin) == HIGH;
+
+    // Only toggle auto-pilot when button transitions from not pressed to pressed
+    if (buttonIsPressed && !prev_button_state)
+    {
+      airplane.autoPilot_ON = !airplane.autoPilot_ON;
+      digitalWrite(LED_pin, airplane.autoPilot_ON ? HIGH : LOW);
+      Serial.println(airplane.autoPilot_ON ? "AP ON" : "AP OFF");
+    }
+
+    prev_button_state = buttonIsPressed;
   }
 
-  prev_button_state = buttonIsPressed;
-
-  if (!pwr_sw_state)
+  else
   {
     digitalWrite(LED_pin, LOW);
     airplane.autoPilot_ON = false;
@@ -1022,7 +1025,7 @@ double AP_rotary_loop()
 
   // If last and current state of CLK are different, then pulse occurred
   // React to only 1 state change to avoid double count
-  if (!pwr_sw_state)
+  if (pwr_sw_state)
   {
     aVal = digitalRead(AUTO_PILOT_RT_CLK);
 
@@ -1077,15 +1080,31 @@ double AP_rotary_loop()
     int btnState = digitalRead(AUTO_PILOT_RT_SW);
 
     // If the button is pressed, set the desired value and clear the counter
-    if (btnState == LOW && (millis() - AP_lastButtonPress > 50))
+    static unsigned long prev_AP_Set_ButtonPressTime = 0;
+    static bool prev_AP_Set_ButtonState = HIGH;
+    if (btnState == LOW)
     {
-      double speed_setting = AP_counter;
-      AP_counter = 0;
-      AutoPilot_display.clear();
-      AutoPilot_display.print("SET");
-      AP_lastButtonPress = millis();
-      return speed_setting;
+
+      if (prev_AP_Set_ButtonState == HIGH && (millis() - prev_AP_Set_ButtonPressTime > 50))
+      {
+        double speed_setting = AP_counter;
+        AP_counter = 0;
+        AutoPilot_display.clear();
+        AutoPilot_display.print("SET");
+        prev_AP_Set_ButtonPressTime = millis();
+        Serial.println("Auto Pilot SET!");
+        Serial.println(speed_setting);
+        return speed_setting;
+      }
+
+      prev_AP_Set_ButtonState = LOW;
     }
+    else
+    {
+      prev_AP_Set_ButtonState = HIGH;
+    }
+
+    return 0;
   }
   return 0;
 }
@@ -1117,10 +1136,8 @@ void AutoPilot_DSP_setup()
 
 void aircraft_Systems()
 {
-  if (pwr_sw_state)
-  {
-    autoPilot(airplane, AP_Button_Pin, AP_LED);
-  }
+
+  autoPilot(airplane, AP_Button_Pin, AP_LED);
 }
 
 void setup()
@@ -1186,6 +1203,7 @@ void setup()
   // airplane.vVelocity=350;
   pinMode(AUTO_PILOT_RT_CLK, INPUT);
   pinMode(AUTO_PILOT_RT_DT, INPUT);
+  pinMode(AUTO_PILOT_RT_SW, INPUT);
   /* Read Pin A
   Whatever state it's in will reflect the last position
   */
