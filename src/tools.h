@@ -7,6 +7,13 @@ double floatMap(double x, double in_min, double in_max, double out_min, double o
     return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
+unsigned long startTime;
+enum APState
+{
+    STATE_IDLE,
+    STATE_SET
+} state = STATE_IDLE;
+
 struct Fuel_tank
 {
 
@@ -35,6 +42,7 @@ struct Engine
     Engine(Fuel_tank &f, int start_pin) : tank{f}, eng_start_pin{start_pin} { thrtl_flip = false; }
 
     bool start_btn_state() { return digitalRead(eng_start_pin); }
+    bool start_up = true;
     double rpm();
     double get_rpm() { return eng_rpm; }
     double get_temp() { return eng_temp; }
@@ -42,7 +50,10 @@ struct Engine
     float get_thrust();
     double fuel_flow();
     double get_throttle();
-    bool fuel_pump();
+
+    void calculateEngineTemperature(float fuel_flow);
+    void calculateEngineTemperature(float fuelFlowRate, float rpm);
+    void EngTemp(double fuelFlowRate, double airspeed);
     bool engineON() { return eng_ON; }
     void setON() { eng_ON = true; }
     void set_throttle(double t) { throttle = t; }
@@ -57,18 +68,21 @@ struct Engine
     int Eng_ABurner_LED;
     int Eng_Hot_LED;
     int Eng_Fire_LED;
+    double eng_temp = 0.0;
+    bool eng_ON;
+    bool f_pump_ON;
 
 private:
     Fuel_tank &tank;
     int eng_start_pin;
     double throttle;
     double eng_rpm;
-    double eng_temp;
-    void set_temperature();
+
+    // void set_temperature();
     float thrust = 0.0f;
     double gps = 1.0; // gives gallons per second at 100% throttle
     double f_flow;
-    bool eng_ON;
+
     bool thrtl_flip;
     bool fuel_cut_off;
     bool after_burner = false;
@@ -131,4 +145,61 @@ void print_stats()
     */
 
     // Serial.println();
+}
+
+double airDensity = 1.225;       // kg/m^3 (density of air at sea level and STP)
+double engineAirflowArea = 3.14; // m^2 (example value for a turbofan engine with 2 m fan diameter)
+// float airspeed = 250.0; // m/s (example value for a commercial airliner at cruise speed)
+
+// Set the initial values
+double fuelFlowRate = 0.1;              // kg/s
+double airFlowRate = 1.0;               // kg/s
+double temperature = 300.0;             // K
+double heatTransferRate = 10000.0;      // J/s
+double heatCapacity = 300.0;            // J/K
+double ambientTemperature = 293.0;      // K
+double heatTransferCoefficient = 100.0; // W/m2K
+double surfaceArea = 1.0;               // m2
+double afterBurnerFactor = 1.2;
+
+// Set the simulation time step
+double timeStep = 1.0 / 60.0;
+
+void Engine::EngTemp(double fuelFlowRate, double airspeed)
+{
+    double temperatureDifference = temperature - ambientTemperature;
+    // Check if the temperature difference is zero
+    if (fabs(temperatureDifference) < 0.0001)
+    {
+        temperatureDifference = 0.0001;
+    }
+    // Serial.print("\ttempDiff: ");
+    // Serial.print(temperatureDifference);
+    double heatTransferRateToEnvironment = heatTransferCoefficient * surfaceArea * temperatureDifference / 1000;
+    // Serial.print("\theatTransfer: ");
+    // Serial.print(heatTransferRateToEnvironment);
+    airFlowRate = airDensity * engineAirflowArea * airspeed;
+    // Serial.print("\tairFlowe: ");
+    // Serial.print(airFlowRate);
+    //  Calculate the temperature change per second
+    double temperatureChange{0};
+    if (after_burner)
+    {
+        temperatureChange = ((fuelFlowRate * heatTransferRate * afterBurnerFactor) / 320 - heatTransferRateToEnvironment / 10 - airFlowRate / 200) / 100;
+    }
+    else
+        temperatureChange = ((fuelFlowRate * heatTransferRate) / 320 - heatTransferRateToEnvironment / 10 - airFlowRate / 200) / 100;
+    // Serial.print("\ttemperatureChange: ");
+    // Serial.print(temperatureChange);
+    //  Update the temperature
+    temperature += temperatureChange;
+    if (fabs(temperature - ambientTemperature) < 0.1)
+    {
+        temperature = ambientTemperature;
+    }
+
+    // Set the temperature of the engine
+    eng_temp = temperature;
+    // Serial.print("\teng_temp: ");
+    // Serial.println(eng_temp);
 }

@@ -122,7 +122,7 @@ int gears_sw_state{0};
 int eng1_cut_sw_state{0};
 int eng2_cut_sw_state{0};
 
-Fuel_tank tank{10000, 10000};
+Fuel_tank tank{10000, 0};
 int ref_amount{0};
 int fill_amount{0};
 Engine engine1(tank, eng1_start);
@@ -181,56 +181,6 @@ double ki = 0.000015;
 double kd = 10.0;
 const double desired_speed = 100;
 */
-
-//--------------------------Auto Pilot --------------------------------------
-// double speed_Auto_Pilot(const double current_speed, const double desired_speed)
-// {
-//   // Define LQR gains and constants
-//   double K = 1;       // Proportional gain
-//   double Ki = 1.0;    // Integral gain
-//   double Kd = 0.1;    // Derivative gain
-//   double Ts = 0.1;    // Sample time
-//   double limit = 100; // Throttle limit
-
-//   // Define error and integral error
-//   static double error_integral = 0;
-//   double error = desired_speed - current_speed;
-
-//   // Calculate derivative error
-//   static double last_error = 0;
-//   double error_derivative = (error - last_error) / Ts;
-//   last_error = error;
-
-//   // Calculate error integral with anti-windup protection
-//   error_integral += error * Ts;
-//   if (error_integral > limit / Ki)
-//   {
-//     error_integral = limit / Ki;
-//   }
-//   else if (error_integral < -limit / Ki)
-//   {
-//     error_integral = -limit / Ki;
-//   }
-
-//   // Calculate control output
-//   double u = K * error + Ki * error_integral + Kd * error_derivative;
-
-//   // Apply throttle limit to control output
-//   if (u > limit)
-//   {
-//     u = limit;
-//   }
-//   else if (u < -limit)
-//   {
-//     u = -limit;
-//   }
-
-//   // Map control output to throttle input range of 0 to 100
-//   double throttle = ((u + limit) / (2 * limit)) * 100;
-
-//   // Return throttle value
-//   return throttle;
-// }
 
 double speed_Auto_Pilot(double current_speed, double target_speed)
 {
@@ -397,8 +347,6 @@ bool autoPilot(RigidBody &airplane, const uint8_t button_pin, uint8_t LED_pin)
     {
       airplane.autoPilot_ON = !airplane.autoPilot_ON;
       digitalWrite(LED_pin, airplane.autoPilot_ON ? HIGH : LOW);
-      // Serial.println(airplane.autoPilot_ON ? "AP ON" : "AP OFF");
-      // Serial.println(airplane.autoPilot_ON);
     }
 
     prev_button_state = buttonIsPressed;
@@ -443,21 +391,26 @@ double Engine::get_throttle()
 
   if (get_throttle_axis() == false)
   {
-    double angle = floatMap(throttle, 0, 1023, 0, 100);
+    double angle = floatMap(throttle, 0, 1023, 11, 100);
     return angle;
-    // return throttle_value * 100.0 / 1023.0;
   }
   else
   {
-    double angle = floatMap(throttle, 0, 1023, 0, 100);
-    return 100 - angle;
+    double angle = floatMap(throttle, 0, 1023, 0, 89);
+    return 100.0 - angle;
   }
 }
 
 double Engine::rpm()
 {
   double flow = fuel_flow();
-  if (flow > 0.0 && eng_ON)
+
+  if (eng_ON && start_up && eng_rpm < 10.0)
+  {
+    eng_rpm += 0.0001; // Spool up engine until it reaches idle RPM of 10
+  }
+
+  if (flow > 0.1 && eng_ON)
   { // spools RPM
     if (eng_rpm < 100.0 * flow)
     {
@@ -467,6 +420,7 @@ double Engine::rpm()
     {
       eng_rpm -= 0.02; // spools down
     }
+    start_up = false;
   }
 
   if (!eng_ON || flow <= 0 || fuel_cut_off)
@@ -476,6 +430,7 @@ double Engine::rpm()
     else
       eng_rpm -= 0.04;
     // eng_rpm = 0.0;
+    start_up = true;
   }
   if (eng_rpm >= 90)
   {
@@ -486,7 +441,6 @@ double Engine::rpm()
   {
     after_burner = false;
   }
-
   return eng_rpm;
 }
 
@@ -508,24 +462,25 @@ float Engine::get_thrust()
     thrust = rpm();
 }
 
-void Engine::set_temperature()
-{
-  // eng_temp=get_rpm()*
-}
-
-bool Engine::fuel_pump()
+bool RigidBody::fuel_pump()
 {
 
   if (f_pump_sw_state && pwr_sw_state)
   {
     digitalWrite(f_pump_LED, HIGH);
     refuel_display.on();
+    engine1.f_pump_ON = false;
+    engine2.f_pump_ON = false;
     return true;
   }
   else
   {
     digitalWrite(f_pump_LED, LOW);
-    eng_ON = false;
+
+    engine1.eng_ON = false;
+    engine1.f_pump_ON = false;
+    engine2.eng_ON = false;
+    engine2.f_pump_ON = false;
     refuel_display.off();
     ref_amount = 0;
     return false;
@@ -540,15 +495,15 @@ double Engine::fuel_flow()
     eng_ON = false;
   }
 
-  else if (0 < tank.get_quantity() && eng_ON && fuel_pump() && !fuel_cut_off)
+  else if (0 < tank.get_quantity() && eng_ON && f_pump_sw_state && !fuel_cut_off)
   {
     f_flow = get_throttle() * gps / 100.0; // gallons
     if (timer_second())
     {
       if (after_burner)
-        tank.consume(f_flow * 40); // After burner on
+        tank.consume(f_flow * 20); // After burner on
       else
-        tank.consume(f_flow * 20); // fuel is depleted from tank
+        tank.consume(f_flow * 10); // fuel is depleted from tank
     }
 
     if (tank.get_quantity() <= 0)
@@ -584,12 +539,14 @@ void gauge_pwr()
     digitalWrite(f_pump_LED, LOW);
     refuel_display.off();
     airspeed_display.off();
+    AutoPilot_display.off();
     digitalWrite(Interior_Lights, LOW);
   }
   else
   {
     digitalWrite(pwr_LED, HIGH);
     airspeed_display.on();
+    AutoPilot_display.on();
     digitalWrite(Interior_Lights, HIGH);
   }
 }
@@ -668,11 +625,6 @@ void gauge_refuel(Fuel_tank &f)
   }
   else
     digitalWrite(fuel_L_LED, LOW);
-
-  // fuel_empty
-
-  // if (rfl_sw_state == HIGH) f.refuel();
-  // else {}
 }
 //--------------------------------------------------------
 
@@ -705,7 +657,7 @@ void gauge_eng(Engine &e)
       digitalWrite(e.EngStatus_LED, LOW);
       digitalWrite(e.Eng_ABurner_LED, LOW);
     }
-    if (e.get_temp() > 1700)
+    if (e.get_temp() > 1900.0)
     {
       digitalWrite(e.Eng_Hot_LED, HIGH);
     }
@@ -809,11 +761,14 @@ void initializeAirplane()
 {
   airplane.vVelocity = 0.0f;
   airplane.vForces = 0.0f;
-  // airplane.vMoments=0.0f;
-  // airplane.set_fC(0.2);
-  // airplane.set_gears_fC(0.05);
   airplane.add_drag_force("fuselage", 0.2, true); // elem [0]
   airplane.add_drag_force("gears", 0.2, false);   // elem [1]
+}
+
+void gauge_engTemp(Engine &e)
+{
+  AutoPilot_display.clear();
+  AutoPilot_display.print(e.eng_temp);
 }
 
 void step_Simulation(float dt)
@@ -884,15 +839,12 @@ void gauge_Speed()
       servo_Speed.write(deg);
     }
 
-    /*
-      //double deg = speed_v * 180.0 / 500;
-      double deg = floatMap(speed_v, 0, 962, 0, 180);
-      //Serial.print("\t deg: ");
-      //Serial.print(int(deg));
-      servo_Speed.write(deg);
-      */
     airspeed_display.clear();
     airspeed_display.print(int(airplane.vVelocity));
+
+    // for testing Eng Temp as i have no other display installed yet
+    // AutoPilot_display.clear();
+    // AutoPilot_display.print(int(airplane.engine1.eng_temp));
   }
   else
   {
@@ -907,7 +859,6 @@ void Engine::get_readings()
 
   if (start_btn_state())
     eng_ON = true;
-  fuel_pump();
   rpm();
 }
 
@@ -1013,7 +964,7 @@ int pinALast;
 int aVal;
 boolean bCW;
 
-AP_rotary_loop()
+void AP_rotary_loop()
 {
   // Ignore interrupts that occur too close together
   static unsigned long lastInterruptTime = 0;
@@ -1052,17 +1003,6 @@ AP_rotary_loop()
       // Determine the duration between the two state changes
       unsigned long duration = interruptTime - lastInterruptTime;
 
-      Serial.print("Rotated: ");
-      if (bCW)
-      {
-        Serial.println("clockwise");
-      }
-      else
-      {
-        Serial.println("counterclockwise");
-      }
-      Serial.print("Encoder Position: ");
-      Serial.println(AP_counter);
       // Keep the counter within bounds
       if (AP_counter < 0)
       {
@@ -1091,14 +1031,11 @@ AP_rotary_loop()
 
       if (prev_AP_Set_ButtonState == HIGH && (millis() - prev_AP_Set_ButtonPressTime > 50))
       {
-        double speed_setting = AP_counter;
-        AP_counter = 0;
+        airplane.AP_speedSet = AP_counter;
+        // AP_counter = 0;
         AutoPilot_display.clear();
         AutoPilot_display.print("SET");
         prev_AP_Set_ButtonPressTime = millis();
-        // Serial.println("Auto Pilot SET!");
-        // Serial.println(speed_setting);
-        airplane.AP_speedSet = speed_setting;
       }
 
       prev_AP_Set_ButtonState = LOW;
@@ -1107,6 +1044,9 @@ AP_rotary_loop()
     {
       prev_AP_Set_ButtonState = HIGH;
     }
+  }
+  else
+  {
   }
 }
 
@@ -1137,6 +1077,8 @@ void AutoPilot_DSP_setup()
 
 void aircraft_Systems()
 {
+  airplane.fuel_pump();
+  airplane.engine1.EngTemp(airplane.engine1.fuel_flow(), airplane.vVelocity);
 
   autoPilot(airplane, AP_Button_Pin, AP_LED);
 }
